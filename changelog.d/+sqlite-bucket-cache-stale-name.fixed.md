@@ -1,0 +1,1 @@
+Fix `SqliteAccountInfo` keeping a stale bucket id after a bucket is deleted and recreated under the same name, which made `B2Api.get_bucket_by_name` return the old id and every call on that bucket fail with `bad_bucket_id`. Reported as [Backblaze/B2_Command_Line_Tool#567](https://github.com/Backblaze/B2_Command_Line_Tool/issues/567).

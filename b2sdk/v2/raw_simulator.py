@@ -14,8 +14,14 @@ from contextlib import suppress
 
 from b2sdk import v3
 from b2sdk.v2._compat import _file_infos_rename
+from b2sdk.v3.exception import BucketIdNotFound as v3BucketIdNotFound
 
-from b2sdk.v2.exception import BadJson, NonExistentBucket, InvalidAuthToken, Unauthorized
+from b2sdk.v2.exception import (
+    BadJson,
+    BucketIdNotFound,
+    InvalidAuthToken,
+    Unauthorized,
+)
 
 
 class KeySimulator(v3.KeySimulator):
@@ -111,6 +117,13 @@ class BucketSimulator(v3.BucketSimulator):
 
 
 class RawSimulator(v3.RawSimulator):
+    def _get_bucket_by_id(self, bucket_id):
+        # Retain the old-style BadRequest-derived exception, as v2's B2Http does for the real server.
+        try:
+            return super()._get_bucket_by_id(bucket_id)
+        except v3BucketIdNotFound as e:
+            raise BucketIdNotFound(e.bucket_id)
+
     @classmethod
     @_file_infos_rename
     def get_upload_file_headers(
@@ -244,7 +257,7 @@ class RawSimulator(v3.RawSimulator):
         if bucket_id is not None:
             # It is possible for bucketId to be filled and bucketName to be empty.
             # It can happen when the bucket was deleted.
-            with suppress(NonExistentBucket):
+            with suppress(BucketIdNotFound):
                 bucket_name_or_none = self._get_bucket_by_id(bucket_id).bucket_name
 
         key_sim = KeySimulator(

@@ -1,0 +1,1 @@
+Add `AbstractCache.remove_bucket_name` and `AbstractCache.remove_bucket_id`, with default implementations so existing cache subclasses keep working, and implement them for `InMemoryCache` and `AuthInfoCache`.

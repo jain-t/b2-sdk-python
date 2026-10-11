@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import platform
 import shutil
@@ -261,6 +262,31 @@ class AccountInfoBase(metaclass=ABCMeta):
             assert self._make_info().get_bucket_id_or_none_from_bucket_name('my-bucket') is None
             assert self._make_info().get_bucket_name_or_none_from_bucket_id('bucket-0') is None
 
+    def test_save_bucket_replaces_stale_row_for_same_name(self):
+        # A bucket deleted and recreated under the same name gets a new id. The old
+        # name -> id entry must not survive, or lookups by name return a dead id
+        # (Backblaze/B2_Command_Line_Tool#567).
+        account_info = self._make_info()
+        old_bucket = mock.MagicMock()
+        old_bucket.name = 'my-bucket'
+        old_bucket.id_ = 'bucket-0'
+        new_bucket = mock.MagicMock()
+        new_bucket.name = 'my-bucket'
+        new_bucket.id_ = 'bucket-1'
+
+        account_info.save_bucket(old_bucket)
+        account_info.save_bucket(new_bucket)
+
+        assert 'bucket-1' == account_info.get_bucket_id_or_none_from_bucket_name('my-bucket')
+        assert account_info.get_bucket_name_or_none_from_bucket_id('bucket-0') is None
+        assert 'my-bucket' == account_info.get_bucket_name_or_none_from_bucket_id('bucket-1')
+        assert [('my-bucket', 'bucket-1')] == account_info.list_bucket_names_ids()
+        if self.PERSISTENCE:
+            assert 'bucket-1' == self._make_info().get_bucket_id_or_none_from_bucket_name(
+                'my-bucket'
+            )
+            assert self._make_info().get_bucket_name_or_none_from_bucket_id('bucket-0') is None
+
     def test_refresh_bucket(self):
         account_info = self._make_info()
         assert account_info.get_bucket_id_or_none_from_bucket_name('my-bucket') is None
@@ -431,6 +457,16 @@ class TestSqliteAccountInfo(AccountInfoBase):
                 file_name=self.db_path if not env else None,
                 last_upgrade_to_run=last_upgrade_to_run,
             )
+
+    def test_unauthorized_account_info_raises_a_clear_error_without_logging(self, caplog):
+        # A file with the schema but no account row is the normal "not authorized yet" state.
+        # It must neither leak a Python TypeError into the message nor put an ERROR in the log.
+        account_info = self._make_info()
+        with caplog.at_level(logging.ERROR, logger='b2sdk'):
+            with pytest.raises(MissingAccountData) as exc_info:
+                account_info.get_account_id()
+        assert str(exc_info.value) == 'Missing account data: account_id'
+        assert [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR] == []
 
     def test_uses_xdg_config_home(self, apiver):
         is_xdg_os = bool(SqliteAccountInfo._get_xdg_config_path())

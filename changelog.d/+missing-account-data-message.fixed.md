@@ -1,0 +1,1 @@
+`MissingAccountData` raised by `SqliteAccountInfo` now names the missing field (e.g. `Missing account data: account_id`) instead of leaking an internal `TypeError` message, and reading from an account file that has not been authorized yet no longer logs an ERROR with a traceback.

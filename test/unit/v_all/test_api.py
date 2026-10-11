@@ -12,6 +12,7 @@ from __future__ import annotations
 import apiver_deps
 import pytest
 from apiver_deps import (
+    AuthInfoCache,
     B2Api,
     B2HttpApiConfig,
     B2Session,
@@ -21,8 +22,9 @@ from apiver_deps import (
     InMemoryAccountInfo,
     InMemoryCache,
     RawSimulator,
+    SqliteAccountInfo,
 )
-from apiver_deps_exception import BucketIdNotFound
+from apiver_deps_exception import BucketIdNotFound, NonExistentBucket
 
 from ..test_base import TestBase
 
@@ -168,3 +170,136 @@ class TestApi(TestBase):
             exp_url = 'http://download.example.com/b2api/v3/b2_download_file_by_id?fileId=file-id'
 
         assert download_url == exp_url
+
+
+def test_recreated_bucket_resolves_to_new_id(tmp_path):
+    # Delete a bucket and recreate it under the same name, then look it up by name.
+    # With the CLI's setup (SqliteAccountInfo behind AuthInfoCache) the cache used to
+    # keep the old id, and every call on the bucket failed with bad_bucket_id
+    # (Backblaze/B2_Command_Line_Tool#567).
+    account_info = SqliteAccountInfo(file_name=str(tmp_path / 'account_info'))
+    api = B2Api(
+        account_info,
+        AuthInfoCache(account_info),
+        api_config=B2HttpApiConfig(_raw_api_class=RawSimulator),
+    )
+    application_key_id, master_key = api.session.raw_api.create_account()
+    api.authorize_account(
+        realm='production', application_key_id=application_key_id, application_key=master_key
+    )
+
+    old_bucket = api.create_bucket('bucket1', 'allPrivate')
+    assert api.get_bucket_by_name('bucket1').id_ == old_bucket.id_  # fills the name -> id cache
+    api.delete_bucket(old_bucket)
+    new_bucket = api.create_bucket('bucket1', 'allPrivate')
+    assert new_bucket.id_ != old_bucket.id_
+
+    assert api.get_bucket_by_name('bucket1').id_ == new_bucket.id_
+    assert account_info.list_bucket_names_ids() == [('bucket1', new_bucket.id_)]
+    if apiver_deps.V >= 2:
+        # the stale id is gone from the cache, so the lookup reaches the server and fails
+        with pytest.raises(BucketIdNotFound):
+            api.get_bucket_by_id(old_bucket.id_)
+    account_info.close()
+
+
+def _sqlite_cached_api(tmp_path):
+    account_info = SqliteAccountInfo(file_name=str(tmp_path / 'account_info'))
+    api = B2Api(
+        account_info,
+        AuthInfoCache(account_info),
+        api_config=B2HttpApiConfig(_raw_api_class=RawSimulator),
+    )
+    application_key_id, master_key = api.session.raw_api.create_account()
+    api.authorize_account(
+        realm='production', application_key_id=application_key_id, application_key=master_key
+    )
+    return api, account_info, application_key_id, master_key
+
+
+def test_bucket_recreated_elsewhere_is_resolved_after_one_failure(tmp_path):
+    # The delete and the recreate happen outside this client's cache (web UI, another
+    # machine, CloudFormation). The first call on the stale id must still fail, but the
+    # stale entry is dropped, so the next lookup by name gets the new id.
+    api, account_info, application_key_id, master_key = _sqlite_cached_api(tmp_path)
+    elsewhere = _api_elsewhere(api, application_key_id, master_key)
+
+    old_bucket = api.create_bucket('bucket1', 'allPrivate')
+    assert api.get_bucket_by_name('bucket1').id_ == old_bucket.id_  # fills this client's cache
+
+    elsewhere.delete_bucket(elsewhere.get_bucket_by_name('bucket1'))
+    new_bucket = elsewhere.create_bucket('bucket1', 'allPrivate')
+    assert new_bucket.id_ != old_bucket.id_
+
+    stale_bucket = api.get_bucket_by_name('bucket1')
+    assert stale_bucket.id_ == old_bucket.id_  # cache hit; nothing has told this client yet
+
+    with pytest.raises(BucketIdNotFound):  # the server answers bad_bucket_id
+        list(stale_bucket.ls())
+
+    assert account_info.get_bucket_id_or_none_from_bucket_name('bucket1') is None
+    assert api.get_bucket_by_name('bucket1').id_ == new_bucket.id_
+    account_info.close()
+
+
+def test_delete_bucket_forgets_cached_name(tmp_path):
+    api, account_info, _, _ = _sqlite_cached_api(tmp_path)
+    bucket = api.create_bucket('bucket1', 'allPrivate')
+    assert account_info.get_bucket_id_or_none_from_bucket_name('bucket1') == bucket.id_
+
+    api.delete_bucket(bucket)
+
+    assert account_info.get_bucket_id_or_none_from_bucket_name('bucket1') is None
+    with pytest.raises(NonExistentBucket):
+        api.get_bucket_by_name('bucket1')
+    account_info.close()
+
+
+def _api_elsewhere(api, application_key_id, master_key):
+    """Another client of the same (simulated) server, with its own cache: a stand-in for
+    another machine, the web UI or an infrastructure tool."""
+    elsewhere = B2Api(
+        InMemoryAccountInfo(),
+        InMemoryCache(),
+        api_config=B2HttpApiConfig(_raw_api_class=RawSimulator),
+    )
+    elsewhere.session.raw_api = api.session.raw_api
+    elsewhere.authorize_account(
+        realm='production', application_key_id=application_key_id, application_key=master_key
+    )
+    return elsewhere
+
+
+def test_get_fresh_state_of_bucket_recreated_elsewhere_forgets_stale_id(tmp_path):
+    # b2_list_buckets with a dead bucket id answers with an empty list rather than an error,
+    # so this path never reaches the session's error handling: it has to evict on its own.
+    api, account_info, application_key_id, master_key = _sqlite_cached_api(tmp_path)
+    elsewhere = _api_elsewhere(api, application_key_id, master_key)
+
+    api.create_bucket('bucket1', 'allPrivate')
+    stale_bucket = api.get_bucket_by_name('bucket1')
+    elsewhere.delete_bucket(elsewhere.get_bucket_by_name('bucket1'))
+    new_bucket = elsewhere.create_bucket('bucket1', 'allPrivate')
+
+    with pytest.raises(BucketIdNotFound):
+        stale_bucket.get_fresh_state()
+
+    assert account_info.get_bucket_id_or_none_from_bucket_name('bucket1') is None
+    assert api.get_bucket_by_name('bucket1').id_ == new_bucket.id_
+    account_info.close()
+
+
+def test_list_buckets_by_name_of_bucket_deleted_elsewhere_forgets_cached_id(tmp_path):
+    api, account_info, application_key_id, master_key = _sqlite_cached_api(tmp_path)
+    elsewhere = _api_elsewhere(api, application_key_id, master_key)
+
+    bucket = api.create_bucket('bucket1', 'allPrivate')
+    assert api.get_bucket_by_name('bucket1').id_ == bucket.id_
+    elsewhere.delete_bucket(elsewhere.get_bucket_by_name('bucket1'))  # deleted, not recreated
+
+    assert api.list_buckets(bucket_name='bucket1') == []  # what `b2 bucket get` does
+
+    assert account_info.get_bucket_id_or_none_from_bucket_name('bucket1') is None
+    with pytest.raises(NonExistentBucket):
+        api.get_bucket_by_name('bucket1')
+    account_info.close()

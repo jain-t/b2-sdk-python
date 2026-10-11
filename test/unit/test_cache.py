@@ -12,7 +12,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import pytest
-from apiver_deps import AuthInfoCache, DummyCache, InMemoryAccountInfo, InMemoryCache
+from apiver_deps import (
+    AuthInfoCache,
+    DummyCache,
+    InMemoryAccountInfo,
+    InMemoryCache,
+    SqliteAccountInfo,
+)
 from pytest_lazy_fixtures import lf
 
 
@@ -31,7 +37,19 @@ def auth_info_cache():
     return AuthInfoCache(InMemoryAccountInfo())
 
 
-@pytest.fixture(scope='function', params=[lf('in_memory_cache'), lf('auth_info_cache')])
+@pytest.fixture
+def sqlite_auth_info_cache(tmp_path):
+    # the persistent store the CLI uses; the only backend that ever kept two rows
+    # for one bucket name (Backblaze/B2_Command_Line_Tool#567)
+    account_info = SqliteAccountInfo(file_name=str(tmp_path / 'account_info'))
+    yield AuthInfoCache(account_info)
+    account_info.close()
+
+
+@pytest.fixture(
+    scope='function',
+    params=[lf('in_memory_cache'), lf('auth_info_cache'), lf('sqlite_auth_info_cache')],
+)
 def cache(request):
     return request.param
 
@@ -83,3 +101,34 @@ class TestCache:
 
         assert cache.get_bucket_id_or_none_from_bucket_name('bucket1') == 'ID-1'
         assert cache.get_bucket_id_or_none_from_bucket_name('bucket2') is None
+
+    def test_remove_bucket_name(self, cache, buckets):
+        cache.save_bucket(buckets[0])
+        cache.save_bucket(buckets[1])
+
+        cache.remove_bucket_name('bucket0')
+
+        assert cache.get_bucket_id_or_none_from_bucket_name('bucket0') is None
+        assert cache.get_bucket_name_or_none_from_bucket_id('ID-0') is None
+        assert cache.get_bucket_id_or_none_from_bucket_name('bucket1') == 'ID-1'
+
+        cache.remove_bucket_name('bucket0')  # removing a name that is not cached is a no-op
+        assert cache.get_bucket_id_or_none_from_bucket_name('bucket1') == 'ID-1'
+
+    def test_remove_bucket_id(self, cache, buckets):
+        cache.save_bucket(buckets[0])
+        cache.save_bucket(buckets[1])
+
+        assert cache.remove_bucket_id('ID-0') == 'bucket0'
+
+        assert cache.get_bucket_id_or_none_from_bucket_name('bucket0') is None
+        assert cache.get_bucket_name_or_none_from_bucket_id('ID-0') is None
+        assert cache.get_bucket_id_or_none_from_bucket_name('bucket1') == 'ID-1'
+        assert cache.remove_bucket_id('ID-0') is None  # already gone: nothing to remove
+        assert cache.remove_bucket_id('never-cached') is None
+
+    def test_dummy_cache_remove_bucket_name(self, dummy_cache, buckets):
+        dummy_cache.save_bucket(buckets[0])
+        dummy_cache.remove_bucket_name('bucket0')
+        assert dummy_cache.get_bucket_id_or_none_from_bucket_name('bucket0') is None
+        assert dummy_cache.remove_bucket_id('ID-0') is None

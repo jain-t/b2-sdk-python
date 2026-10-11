@@ -647,14 +647,18 @@ class SqliteAccountInfo(UrlPoolAccountInfo):
         try:
             with self._get_connection() as conn:
                 cursor = conn.execute(f'SELECT {column_name} FROM account;')
-                value = cursor.fetchone()[0]
-                return value
-        except Exception as e:
+                row = cursor.fetchone()
+        except sqlite3.Error:
             logger.exception(
                 '_get_account_info_or_raise encountered a problem while trying to retrieve "%s"',
                 column_name,
             )
-            raise MissingAccountData(str(e))
+            raise MissingAccountData(column_name)
+        if row is None:
+            # No account row yet: this account info has not been authorized (or was cleared).
+            # That is a normal state, not an error worth a traceback in the log.
+            raise MissingAccountData(column_name)
+        return row[0]
 
     def refresh_entire_bucket_name_cache(self, name_id_iterable):
         with self._get_connection() as conn:
@@ -667,7 +671,12 @@ class SqliteAccountInfo(UrlPoolAccountInfo):
 
     def save_bucket(self, bucket):
         with self._get_connection() as conn:
-            conn.execute('DELETE FROM bucket WHERE bucket_id = ?;', (bucket.id_,))
+            # A bucket recreated under the same name gets a new id; drop the stale
+            # row for the name as well, so there is always one row per bucket name.
+            conn.execute(
+                'DELETE FROM bucket WHERE bucket_id = ? OR bucket_name = ?;',
+                (bucket.id_, bucket.name),
+            )
             conn.execute(
                 'INSERT INTO bucket (bucket_id, bucket_name) VALUES (?, ?);',
                 (bucket.id_, bucket.name),

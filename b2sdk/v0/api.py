@@ -28,4 +28,7 @@ class B2Api(v1.B2Api):
         :param b2sdk.v1.Bucket bucket: a :term:`bucket` to delete
         """
         account_id = self.account_info.get_account_id()
-        return self.session.delete_bucket(account_id, bucket.id_)
+        response = self.session.delete_bucket(account_id, bucket.id_)
+        # the name can be reused by a new bucket; a lookup by name must not return the old id
+        self.cache.remove_bucket_name(bucket.name)
+        return response

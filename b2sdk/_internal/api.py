@@ -383,6 +383,8 @@ class B2Api(metaclass=B2TraceMeta):
         """
         account_id = self.account_info.get_account_id()
         self.session.delete_bucket(account_id, bucket.id_)
+        # the name can be reused by a new bucket; a lookup by name must not return the old id
+        self.cache.remove_bucket_name(bucket.name)
 
     def list_buckets(
         self, bucket_name=None, bucket_id=None, *, use_cache: bool = False
@@ -436,6 +438,13 @@ class B2Api(metaclass=B2TraceMeta):
             # be valid. So we save the one bucket returned from the list_buckets call.
             for bucket in buckets:
                 self.cache.save_bucket(bucket)
+            if not buckets:
+                # The server has no such bucket (any more), e.g. it was deleted or recreated
+                # from elsewhere. Whatever the cache still says about it is stale.
+                if bucket_id:
+                    self.cache.remove_bucket_id(bucket_id)
+                else:
+                    self.cache.remove_bucket_name(bucket_name)
         else:
             # Otherwise we want to clear the cache and save the buckets returned from list_buckets
             # since we just got a new list of all the buckets for this account.

@@ -48,6 +48,24 @@ class AbstractCache(metaclass=ABCMeta):
     def set_bucket_name_cache(self, buckets):
         pass
 
+    def remove_bucket_name(self, bucket_name):
+        """
+        Forget the cached id of a bucket, e.g. once the server reports that id as gone.
+
+        Not abstract on purpose: existing third-party caches keep working and simply never evict.
+        """
+
+    def remove_bucket_id(self, bucket_id):
+        """
+        Forget the cached entry whose id is ``bucket_id``, e.g. once the server reports that id as gone.
+
+        :return: the bucket name that was cached under that id, or ``None`` if there was none
+        """
+        bucket_name = self.get_bucket_name_or_none_from_bucket_id(bucket_id)
+        if bucket_name is not None:
+            self.remove_bucket_name(bucket_name)
+        return bucket_name
+
     def _name_id_iterator(self, buckets):
         return ((bucket.name, bucket.id_) for bucket in buckets)
 
@@ -106,6 +124,9 @@ class InMemoryCache(AbstractCache):
     def set_bucket_name_cache(self, buckets):
         self.name_id_map = dict(self._name_id_iterator(buckets))
 
+    def remove_bucket_name(self, bucket_name):
+        self.name_id_map.pop(bucket_name, None)
+
 
 class AuthInfoCache(AbstractCache):
     """
@@ -132,3 +153,6 @@ class AuthInfoCache(AbstractCache):
 
     def set_bucket_name_cache(self, buckets):
         self.info.refresh_entire_bucket_name_cache(self._name_id_iterator(buckets))
+
+    def remove_bucket_name(self, bucket_name):
+        self.info.remove_bucket_name(bucket_name)

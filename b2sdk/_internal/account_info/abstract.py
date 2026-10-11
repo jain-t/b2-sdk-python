@@ -82,6 +82,10 @@ class AbstractAccountInfo(metaclass=B2TraceMetaAbstract):
         """
         Remember the ID for the given bucket name.
 
+        A bucket name maps to exactly one ID: saving a bucket replaces any entry
+        previously stored under the same name (a bucket deleted and recreated under
+        the same name gets a new ID) as well as any entry stored under the same ID.
+
         :param b2sdk.v2.Bucket bucket: a Bucket object
         """
 

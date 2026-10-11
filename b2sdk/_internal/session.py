@@ -21,7 +21,7 @@ from b2sdk._internal.api_config import DEFAULT_HTTP_API_CONFIG, B2HttpApiConfig
 from b2sdk._internal.b2http import B2Http
 from b2sdk._internal.cache import AbstractCache, AuthInfoCache, DummyCache
 from b2sdk._internal.encryption.setting import EncryptionSetting
-from b2sdk._internal.exception import InvalidAuthToken, Unauthorized
+from b2sdk._internal.exception import BucketIdNotFound, InvalidAuthToken, Unauthorized
 from b2sdk._internal.file_lock import BucketRetentionSetting, FileRetentionSetting, LegalHold
 from b2sdk._internal.raw_api import ALL_CAPABILITIES, REALM_URLS, LifecycleRule
 from b2sdk._internal.replication.setting import ReplicationConfiguration
@@ -496,6 +496,25 @@ class B2Session:
             if not exc.code and first_attempt and self.authorize_automatically():
                 return self._execute_with_auth_retry(callback, first_attempt=False)
             raise self._add_app_key_info_to_unauthorized(exc)
+        except BucketIdNotFound as exc:
+            # The cached name -> id mapping is stale: the bucket was deleted, possibly
+            # recreated elsewhere. Forget it so the next lookup by name asks the server.
+            self._forget_bucket_id(exc.bucket_id)
+            raise
+
+    def _forget_bucket_id(self, bucket_id):
+        try:
+            bucket_name = self.cache.remove_bucket_id(bucket_id)
+        except Exception:
+            # a cache problem must never mask the error that brought us here
+            logger.debug('could not evict bucket id %s from the cache', bucket_id, exc_info=True)
+            return
+        if bucket_name is not None:
+            logger.info(
+                'bucket id %s (cached for bucket %r) is gone on the server; dropped it from the cache',
+                bucket_id,
+                bucket_name,
+            )
 
     def _add_app_key_info_to_unauthorized(self, unauthorized):
         """

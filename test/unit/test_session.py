@@ -9,11 +9,20 @@
 ######################################################################
 from __future__ import annotations
 
+from dataclasses import dataclass
 from unittest import mock
 
 import pytest
-from apiver_deps import AuthInfoCache, B2Session, DummyCache, InMemoryAccountInfo
-from apiver_deps_exception import Unauthorized
+from apiver_deps import (
+    AuthInfoCache,
+    B2HttpApiConfig,
+    B2Session,
+    DummyCache,
+    InMemoryAccountInfo,
+    InMemoryCache,
+    RawSimulator,
+)
+from apiver_deps_exception import BucketIdNotFound, Unauthorized
 
 from .account_info.fixtures import *  # noqa
 from .fixtures import *  # noqa
@@ -134,3 +143,65 @@ def test_session__with_in_memory_account_info(apiver_int):
     else:
         assert isinstance(b2_session.cache, AuthInfoCache)
         assert b2_session.cache.info is memory_info
+
+
+@dataclass
+class _CachedBucket:
+    name: str
+    id_: str
+
+
+def _authorized_session(cache):
+    b2_session = B2Session(
+        account_info=InMemoryAccountInfo(),
+        cache=cache,
+        api_config=B2HttpApiConfig(_raw_api_class=RawSimulator),
+    )
+    application_key_id, master_key = b2_session.raw_api.create_account()
+    b2_session.authorize_account('production', application_key_id, master_key)
+    return b2_session
+
+
+def test_session__forgets_cached_bucket_on_bucket_id_not_found():
+    # The server answering bad_bucket_id for a cached id means the name -> id entry is
+    # stale (the bucket was deleted, possibly recreated elsewhere). The call still fails,
+    # but the entry is dropped so the next lookup by name asks the server.
+    cache = InMemoryCache()
+    b2_session = _authorized_session(cache)
+    cache.save_bucket(_CachedBucket('my-bucket', 'bucket-0'))
+    cache.save_bucket(_CachedBucket('other-bucket', 'bucket-1'))
+
+    with mock.patch.object(
+        b2_session.raw_api, 'list_file_names', side_effect=BucketIdNotFound('bucket-0')
+    ):
+        with pytest.raises(BucketIdNotFound):
+            b2_session.list_file_names('bucket-0')
+
+    assert cache.get_bucket_id_or_none_from_bucket_name('my-bucket') is None
+    assert cache.get_bucket_id_or_none_from_bucket_name('other-bucket') == 'bucket-1'
+
+
+def test_session__bucket_id_not_found_for_unknown_id_leaves_cache_alone():
+    cache = InMemoryCache()
+    b2_session = _authorized_session(cache)
+    cache.save_bucket(_CachedBucket('my-bucket', 'bucket-0'))
+
+    with mock.patch.object(
+        b2_session.raw_api, 'list_file_names', side_effect=BucketIdNotFound('not-cached')
+    ):
+        with pytest.raises(BucketIdNotFound):
+            b2_session.list_file_names('not-cached')
+
+    assert cache.get_bucket_id_or_none_from_bucket_name('my-bucket') == 'bucket-0'
+
+
+def test_session__cache_failure_does_not_mask_bucket_id_not_found():
+    cache = mock.MagicMock()
+    cache.get_bucket_name_or_none_from_bucket_id.side_effect = RuntimeError('cache is broken')
+    b2_session = _authorized_session(cache)
+
+    with mock.patch.object(
+        b2_session.raw_api, 'list_file_names', side_effect=BucketIdNotFound('bucket-0')
+    ):
+        with pytest.raises(BucketIdNotFound):
+            b2_session.list_file_names('bucket-0')
