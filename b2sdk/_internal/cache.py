@@ -51,6 +51,17 @@ class AbstractCache(metaclass=ABCMeta):
     def _name_id_iterator(self, buckets):
         return ((bucket.name, bucket.id_) for bucket in buckets)
 
+    def remove_bucket_id(self, bucket_id):
+        """
+        Forget the bucket id from the cache.
+        """
+
+    def remove_bucket_name(self, bucket_name):
+        """
+        Forget the bucket name from the cache.
+        """    
+
+
 
 class DummyCache(AbstractCache):
     """
@@ -106,6 +117,13 @@ class InMemoryCache(AbstractCache):
     def set_bucket_name_cache(self, buckets):
         self.name_id_map = dict(self._name_id_iterator(buckets))
 
+    def remove_bucket_id(self, bucket_id):
+        name = self.get_bucket_name_or_none_from_bucket_id(bucket_id)
+        self.name_id_map.pop(name, None)
+
+    def remove_bucket_name(self, bucket_name):
+        self.name_id_map.pop(bucket_name, None)
+
 
 class AuthInfoCache(AbstractCache):
     """
@@ -132,3 +150,9 @@ class AuthInfoCache(AbstractCache):
 
     def set_bucket_name_cache(self, buckets):
         self.info.refresh_entire_bucket_name_cache(self._name_id_iterator(buckets))
+
+    def remove_bucket_id(self, bucket_id):
+        self.info.remove_bucket_id(bucket_id)
+
+    def remove_bucket_name(self, bucket_name):
+        self.info.remove_bucket_name(bucket_name)    

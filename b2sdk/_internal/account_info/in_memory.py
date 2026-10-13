@@ -150,3 +150,15 @@ class InMemoryAccountInfo(UrlPoolAccountInfo):
     @_raise_missing_if_result_is_none
     def get_s3_api_url(self):
         return self._s3_api_url
+
+    def remove_bucket_id(self, bucket_id):
+        """
+        Remove the bucket ID from the cache.
+
+        :param str bucket_id: a bucket ID
+        """
+        name = self.get_bucket_name_or_none_from_bucket_id(bucket_id)
+        self.remove_bucket_name(name)
+    
+        
+        

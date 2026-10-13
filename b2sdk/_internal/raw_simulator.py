@@ -29,6 +29,7 @@ from .exception import (
     BadJson,
     BadRequest,
     BadUploadUrl,
+    BucketIdNotFound,
     ChecksumMismatch,
     Conflict,
     CopySourceTooBig,
@@ -1522,7 +1523,7 @@ class RawSimulator(AbstractRawApi):
             for _id in bucket_ids:
                 try:
                     buckets.append({'id': _id, 'name': self._get_bucket_by_id(_id).bucket_name})
-                except NonExistentBucket:
+                except BucketIdNotFound:
                     buckets.append({'id': _id, 'name': None})
 
         key_sim = KeySimulator(
@@ -2162,7 +2163,7 @@ class RawSimulator(AbstractRawApi):
 
     def _get_bucket_by_id(self, bucket_id) -> BucketSimulator:
         if bucket_id not in self.bucket_id_to_bucket:
-            raise NonExistentBucket(bucket_id)
+            raise BucketIdNotFound(bucket_id)
         return self.bucket_id_to_bucket[bucket_id]
 
     def _get_bucket_by_name(self, bucket_name):

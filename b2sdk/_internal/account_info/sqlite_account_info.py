@@ -299,7 +299,7 @@ class SqliteAccountInfo(UrlPoolAccountInfo):
         """
         )
         # By default, we run all the upgrades
-        last_upgrade_to_run = 6 if last_upgrade_to_run is None else last_upgrade_to_run
+        last_upgrade_to_run = 7 if last_upgrade_to_run is None else last_upgrade_to_run
         # Add the 'allowed' column if it hasn't been yet.
         if 1 <= last_upgrade_to_run:
             self._ensure_update(1, ['ALTER TABLE account ADD COLUMN allowed TEXT;'])
@@ -409,6 +409,11 @@ class SqliteAccountInfo(UrlPoolAccountInfo):
         # There were reported cases of users with db schema upgraded to version 5 and still containing old single-bucket style allowed dict. This was possible because users of sdk apiver <= v2 still received old-styled allowed dicts (from v3 remote API) and there was no proper transformation mechanism when setting the auth data. The bug has now been addressed, but we need an additional migration to address aforementioned cases.
         if 6 <= last_upgrade_to_run:
             self._migrate_allowed_to_multi_bucket(version=6)
+
+        if 7 <= last_upgrade_to_run:
+            self._ensure_update(
+                7,["DELETE FROM bucket;"]
+            )    
 
     def _migrate_allowed_to_multi_bucket(self, *, version: int):
         """
@@ -667,7 +672,7 @@ class SqliteAccountInfo(UrlPoolAccountInfo):
 
     def save_bucket(self, bucket):
         with self._get_connection() as conn:
-            conn.execute('DELETE FROM bucket WHERE bucket_id = ?;', (bucket.id_,))
+            conn.execute('DELETE FROM bucket WHERE bucket_id = ? OR bucket_name = ?;', (bucket.id_, bucket.name))
             conn.execute(
                 'INSERT INTO bucket (bucket_id, bucket_name) VALUES (?, ?);',
                 (bucket.id_, bucket.name),
@@ -699,3 +704,7 @@ class SqliteAccountInfo(UrlPoolAccountInfo):
             return None
         except sqlite3.Error:
             return None
+
+    def remove_bucket_id(self, bucket_id):
+        with self._get_connection() as conn:
+            conn.execute('DELETE FROM bucket WHERE bucket_id = ?;', (bucket_id,))

@@ -21,7 +21,7 @@ from b2sdk._internal.api_config import DEFAULT_HTTP_API_CONFIG, B2HttpApiConfig
 from b2sdk._internal.b2http import B2Http
 from b2sdk._internal.cache import AbstractCache, AuthInfoCache, DummyCache
 from b2sdk._internal.encryption.setting import EncryptionSetting
-from b2sdk._internal.exception import InvalidAuthToken, Unauthorized
+from b2sdk._internal.exception import BucketIdNotFound, InvalidAuthToken, Unauthorized
 from b2sdk._internal.file_lock import BucketRetentionSetting, FileRetentionSetting, LegalHold
 from b2sdk._internal.raw_api import ALL_CAPABILITIES, REALM_URLS, LifecycleRule
 from b2sdk._internal.replication.setting import ReplicationConfiguration
@@ -496,6 +496,12 @@ class B2Session:
             if not exc.code and first_attempt and self.authorize_automatically():
                 return self._execute_with_auth_retry(callback, first_attempt=False)
             raise self._add_app_key_info_to_unauthorized(exc)
+        except BucketIdNotFound as exc:
+            try:
+                self.cache.remove_bucket_id(exc.bucket_id)
+            except Exception:
+                logger.exception("Failed to remove bucket id %s from cache", exc.bucket_id)    
+            raise
 
     def _add_app_key_info_to_unauthorized(self, unauthorized):
         """

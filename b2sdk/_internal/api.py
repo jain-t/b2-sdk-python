@@ -14,6 +14,8 @@ from collections.abc import Sequence
 from contextlib import suppress
 from typing import Generator
 
+
+
 from .account_info.abstract import AbstractAccountInfo
 from .account_info.exception import MissingAccountData
 from .api_config import DEFAULT_HTTP_API_CONFIG, B2HttpApiConfig
@@ -383,6 +385,8 @@ class B2Api(metaclass=B2TraceMeta):
         """
         account_id = self.account_info.get_account_id()
         self.session.delete_bucket(account_id, bucket.id_)
+        self.cache.remove_bucket_id(bucket.id_)
+
 
     def list_buckets(
         self, bucket_name=None, bucket_id=None, *, use_cache: bool = False
@@ -434,8 +438,16 @@ class B2Api(metaclass=B2TraceMeta):
         if bucket_name or bucket_id:
             # If a bucket_name or bucket_id is specified we don't clear the cache because the other buckets could still
             # be valid. So we save the one bucket returned from the list_buckets call.
-            for bucket in buckets:
-                self.cache.save_bucket(bucket)
+            if not buckets:
+                # If the bucket is not found, we want to remove it from the cache if it exists.
+                if bucket_id:
+                    self.cache.remove_bucket_id(bucket_id)
+                else:
+                    # If we have a bucket name, we need to get the bucket id from the cache and remove it.
+                    self.cache.remove_bucket_name(bucket_name)
+            else:    
+                for bucket in buckets:
+                    self.cache.save_bucket(bucket)
         else:
             # Otherwise we want to clear the cache and save the buckets returned from list_buckets
             # since we just got a new list of all the buckets for this account.

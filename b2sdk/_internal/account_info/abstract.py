@@ -421,3 +421,11 @@ class AbstractAccountInfo(metaclass=B2TraceMetaAbstract):
         :param str file_id: a file ID
         """
         pass
+
+    def remove_bucket_id(self, bucket_id):
+        """
+        Remove the bucket ID from the cache.
+
+        :param str bucket_id: a bucket ID
+        """
+        
