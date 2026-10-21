@@ -15,7 +15,7 @@ from contextlib import suppress
 from b2sdk import v3
 from b2sdk.v2._compat import _file_infos_rename
 
-from b2sdk.v2.exception import BadJson, BucketIdNotFound, NonExistentBucket, InvalidAuthToken, Unauthorized
+from b2sdk.v2.exception import BadJson, v3BucketIdNotFound, InvalidAuthToken, Unauthorized
 
 
 class KeySimulator(v3.KeySimulator):
@@ -244,7 +244,7 @@ class RawSimulator(v3.RawSimulator):
         if bucket_id is not None:
             # It is possible for bucketId to be filled and bucketName to be empty.
             # It can happen when the bucket was deleted.
-            with suppress(BucketIdNotFound):
+            with suppress(v3BucketIdNotFound):
                 bucket_name_or_none = self._get_bucket_by_id(bucket_id).bucket_name
 
         key_sim = KeySimulator(
